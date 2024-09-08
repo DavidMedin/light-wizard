@@ -34,30 +34,28 @@ import lightwizard.composeapp.generated.resources.compose_multiplatform
 
 @Composable
 @Preview
-fun App(rawPlatform : Platform) {
+fun App(platform : Platform) {
 
     MaterialTheme {
         var showContent by remember { mutableStateOf(false) }
-        val platform = remember { mutableStateOf(rawPlatform) }
 
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
             Text("Light Wizard 2 🧙🏽", fontWeight = FontWeight.ExtraBold, fontStyle = FontStyle.Italic)
             Text("Looking for lights...")
-            Text("Bluetooth Enabled: ${platform.value.bluetoothEnabled()}")
 
-            Button(onClick = { platform.value.requestPermissions() } ) {
-                Text("Request Permissions")
-            }
-            Button(onClick = { showContent = !showContent }) {
-                Text("Connect")
-            }
-            AnimatedVisibility(showContent) {
-                Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Image(painterResource(Res.drawable.compose_multiplatform), null)
-                    platform.value.doBluetoothThings()
-                    Text("Bluetooth things : ${platform.value.state}")
-                }
-            }
+            Text("Bluetooth Enabled: ${platform.bluetoothEnabled()}")
+            platform.requestPermissions()
+            platform.doBluetoothThings()
+
+//            Button(onClick = { showContent = !showContent }) {
+//                Text("Connect")
+//            }
+//            AnimatedVisibility(showContent) {
+////                Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+////                    Image(painterResource(Res.drawable.compose_multiplatform), null)
+////                }
+//
+//            }
             
             Canvas(modifier = Modifier
                     .height(40.dp)
