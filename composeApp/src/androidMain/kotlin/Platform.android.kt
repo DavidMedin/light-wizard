@@ -17,6 +17,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import androidx.annotation.RequiresApi
+import androidx.compose.animation.AnimatedVisibility
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat.getSystemService
 import com.davidmedin.lightwizard.MainActivity
@@ -29,8 +30,10 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 
 @RequiresApi(Build.VERSION_CODES.S)
 class AndroidPlatform constructor(private val activity : MainActivity) : Platform {
@@ -52,31 +55,35 @@ class AndroidPlatform constructor(private val activity : MainActivity) : Platfor
 
     val wizardScanner = adapter.bluetoothLeScanner
     var scanning = false
-    val handler = Handler(Looper.getMainLooper()) // Used to run a code block in X seconds.
+//    val handler = Handler(Looper.getMainLooper()) // Used to run a code block in X seconds.
 
     // Stops scanning after 10 seconds.
     private val SCAN_PERIOD: Long = 10000
 
     // Used by toggleScanForWizard.
-    val scanCallback : ScanCallback = object : ScanCallback() {
 
-        @SuppressLint("MissingPermission") // Should only be called by toggleScanForWizard, which checks.
-        override fun onScanResult(callbackType: Int, result: ScanResult) {
-            super.onScanResult(callbackType, result)
-
-//            if(result.device.name != null) {
-//                println("Found BLE device : ${result.device.name}")
-//            }
-            if( isBLEDeviceAWizard(result.device) ) {
-                lightwizard_device = result.device
-                Log.i("BLE Scanner","A suitable wizard has been found")
-            }
-        }
-
-    }
 
     // Toggle the BLE device scan for the Light Wizard.
-    fun toggleScanForWizard() {
+    suspend fun scanForWizard() : BluetoothDevice? {
+        val found_devices : MutableList<BluetoothDevice> = mutableListOf()
+        val scanCallback : ScanCallback = object : ScanCallback() {
+
+            @SuppressLint("MissingPermission") // Should only be called by toggleScanForWizard, which checks.
+            override fun onScanResult(callbackType: Int, result: ScanResult) {
+                super.onScanResult(callbackType, result)
+
+                if(result.device.name != null) {
+                    println("Found BLE device : ${result.device.name}")
+                    found_devices.add(result.device)
+                }
+//                if( isBLEDeviceAWizard(result.device) ) {
+//                    lightwizard_device = result.device
+//                    Log.i("BLE Scanner","A suitable wizard has been found")
+//                }
+            }
+
+        }
+
         if(!scanning) {
             if (ActivityCompat.checkSelfPermission(
                     activity.applicationContext,
@@ -84,7 +91,7 @@ class AndroidPlatform constructor(private val activity : MainActivity) : Platfor
                 ) != PackageManager.PERMISSION_GRANTED
             ) {
                 state = "no perms"
-                return // TODO: Return some sort of UI error saying "no perms"
+                return null // TODO: Return some sort of UI error saying "no perms"
             }
             if (ActivityCompat.checkSelfPermission(
                     activity.applicationContext,
@@ -92,7 +99,7 @@ class AndroidPlatform constructor(private val activity : MainActivity) : Platfor
                 ) != PackageManager.PERMISSION_GRANTED
             ) {
                 state = "no perms"
-                return // TODO: Return some sort of UI error saying "no perms"
+                return null // TODO: Return some sort of UI error saying "no perms"
             }
             if (ActivityCompat.checkSelfPermission(
                     activity.applicationContext,
@@ -100,26 +107,45 @@ class AndroidPlatform constructor(private val activity : MainActivity) : Platfor
                 ) != PackageManager.PERMISSION_GRANTED
             ) {
                 state = "no perms"
-                return // TODO: Return some sort of UI error saying "no perms"
+                return null // TODO: Return some sort of UI error saying "no perms"
             }
 
             // Stop scan in a few seconds.
-            handler.postDelayed( {
-                // Code block - will run in SCAN_PERIOD ms.
-                scanning = false
-                wizardScanner.stopScan(scanCallback)
-                println("Done scanning BLE.")
-                // ==========
-            } , SCAN_PERIOD)
+//            handler.postDelayed( {
+//                // Code block - will run in SCAN_PERIOD ms.
+//                scanning = false
+//                wizardScanner.stopScan(scanCallback)
+//                println("Done scanning BLE.")
+//                // ==========
+//            } , SCAN_PERIOD)
 
             // Start scan.
             scanning = true
             wizardScanner.startScan(scanCallback)
+
+            // wait
+            delay(SCAN_PERIOD)
+
+            // stop scan
+            scanning = false
+            wizardScanner.stopScan(scanCallback)
+            println("Done scanning BLE.")
+            println("Extracting found devices...")
+            var wizard : BluetoothDevice? = null
+            found_devices.forEach {
+                println(it)
+                if( isBLEDeviceAWizard(it) ) {
+                    println("Found wizard")
+                    wizard = it
+                }
+            }
+            return wizard
         }else {
             // Currently scanning, stop the scan.
             scanning = false
             wizardScanner.stopScan(scanCallback)
         }
+        return null
     }
 
     val GATTCallbacks : BluetoothGattCallback = object : BluetoothGattCallback() {
@@ -227,24 +253,63 @@ class AndroidPlatform constructor(private val activity : MainActivity) : Platfor
         }
     }
 
+    // I Don't know how this works TODO: figure it out
+    sealed class Result<out T> {
+        object Loading : Result<Nothing>()
+        object Error : Result<Nothing>()
+        data class Success<R>(val r: R?) : Result<R>()
+    }
+    @Composable
+    fun getWizardDevice() : State<Result<BluetoothDevice>> {
+        return produceState<Result<BluetoothDevice>>(initialValue = Result.Loading ) {
+            var wizard_device : BluetoothDevice? = getWizardFromBondedBLEDevices()
+            if ( wizard_device == null ) {
+                // There is no wizard that is bonded, time to find it.
+                println("No wizard is bonded, scanning...")
+                wizard_device = scanForWizard() // May yield the coroutine
+
+                if (wizard_device == null) {
+                    value = Result.Error
+                }else {
+                    value = Result.Success(wizard_device)
+                }
+            }else {
+                value = Result.Success(wizard_device)
+            }
+        }
+    }
+
     @Composable
     override fun doBluetoothThings() {
         // probably need to use produceState .
-        val wizard_device_state = remember { mutableStateOf(lightwizard_device) }
         println("Starting to do bluetooth things")
-        wizard_device_state.value = getWizardFromBondedBLEDevices()
-        if ( wizard_device_state.value == null ) {
-            // There is no wizard that is bonded, time to find it.
-            println("No wizard is bonded, scanning...")
-            toggleScanForWizard()
-            // Somehow wait for the wizard to be found
-        }
 
-        Text("Am scanning? : $is_scanning")
-        Button(onClick = {toggleScanForWizard()}) {
+
+        Text("Am scanning? : $scanning")
+        // button that says "scan"
+        // when pressed, starts scanning, text that says "scanning"
+        var show_content by remember { mutableStateOf(false) }
+        Button(onClick = {show_content = true}) {
             Text("Toggle Scan")
         }
-        showBLEDevice(wizard_device_state.value)
+        if(show_content) {
+            val wizard_device = getWizardDevice()
+            when(wizard_device.value){
+                is Result.Loading -> {
+                    Text("Scanning...")
+                }
+                Result.Error -> {
+                    Text("Failed!")
+                }
+                is Result.Success -> {
+                    val (device) = wizard_device.value as Result.Success<BluetoothDevice>
+//                    Text("Got device ${device!!.name}")
+                    showBLEDevice(device = device)
+                }
+            }
+
+        }
+//        showBLEDevice(wizard_device_state.value)
 
     }
 
