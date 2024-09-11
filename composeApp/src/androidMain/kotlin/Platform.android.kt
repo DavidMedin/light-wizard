@@ -1,26 +1,17 @@
 import android.Manifest
 import android.annotation.SuppressLint
-import android.app.Activity
 import android.os.Build
-import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
-import android.bluetooth.BluetoothGattCharacteristic
-import android.bluetooth.BluetoothGattCharacteristic.PERMISSION_WRITE
-import android.bluetooth.BluetoothGattCharacteristic.PROPERTY_WRITE
 import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
-import android.content.Context
 import android.content.pm.PackageManager
-import android.os.Handler
-import android.os.Looper
 import android.util.Log
 import androidx.annotation.RequiresApi
-import androidx.compose.animation.AnimatedVisibility
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat.getSystemService
 import com.davidmedin.lightwizard.MainActivity
@@ -28,18 +19,20 @@ import com.davidmedin.lightwizard.MainActivity
 import androidx.compose.runtime.Composable
 import androidx.compose.material.Button
 import androidx.compose.material.Text
-import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.State
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import com.davidmedin.lightwizard.LightWizardGatt
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.channels.onFailure
+import kotlinx.coroutines.channels.trySendBlocking
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
-import java.util.UUID
+import kotlin.coroutines.cancellation.CancellationException
 
 @RequiresApi(Build.VERSION_CODES.S)
 class AndroidPlatform constructor(private val activity : MainActivity) : Platform {
@@ -61,10 +54,9 @@ class AndroidPlatform constructor(private val activity : MainActivity) : Platfor
 
     val wizardScanner = adapter.bluetoothLeScanner
     var scanning = false
-//    val handler = Handler(Looper.getMainLooper()) // Used to run a code block in X seconds.
 
     // Stops scanning after 10 seconds.
-    private val SCAN_PERIOD: Long = 10000
+    private val SCAN_PERIOD: Long = 12000
 
     // Used by toggleScanForWizard.
 
@@ -82,10 +74,6 @@ class AndroidPlatform constructor(private val activity : MainActivity) : Platfor
                     println("Found BLE device : ${result.device.name}")
                     found_devices.add(result.device)
                 }
-//                if( isBLEDeviceAWizard(result.device) ) {
-//                    lightwizard_device = result.device
-//                    Log.i("BLE Scanner","A suitable wizard has been found")
-//                }
             }
 
         }
@@ -116,16 +104,8 @@ class AndroidPlatform constructor(private val activity : MainActivity) : Platfor
                 return null // TODO: Return some sort of UI error saying "no perms"
             }
 
-            // Stop scan in a few seconds.
-//            handler.postDelayed( {
-//                // Code block - will run in SCAN_PERIOD ms.
-//                scanning = false
-//                wizardScanner.stopScan(scanCallback)
-//                println("Done scanning BLE.")
-//                // ==========
-//            } , SCAN_PERIOD)
-
             // Start scan.
+            // Aiden says that bluetooth scanning is weird and you need to do this sometimes.
             wizardScanner.startScan(scanCallback)
             wizardScanner.stopScan(scanCallback)
 
@@ -158,13 +138,8 @@ class AndroidPlatform constructor(private val activity : MainActivity) : Platfor
     }
 
 
-    var lightwizard_device : BluetoothDevice? = null // BLE device
-    var lightwizard_gatt : BluetoothGatt? = null // BLE device connection instance
-    var wizard_service :  BluetoothGattService? = null // BLE service for switching lights
+//    var wizard_service :  BluetoothGattService? = null // BLE service for switching lights
 
-    // TODO: Don't use a string, make an actual UUID object.
-    val wizard_service_id = "0ca2d9fa-785e-4811-a8c2-d4233409d79f"
-    val wizard_char_switch_id = "e11d545a-908c-4e0d-b765-97d13c33aa50"
 
     override fun bluetoothEnabled(): Boolean {
         return adapter.isEnabled
@@ -176,9 +151,9 @@ class AndroidPlatform constructor(private val activity : MainActivity) : Platfor
     }
 
     fun getWizardFromBondedBLEDevices() : BluetoothDevice? {
-        if ( lightwizard_device != null ) {
-            return lightwizard_device// Already connected to wizard, just leave.
-        }
+//        if ( lightwizard_device != null ) {
+//            return lightwizard_device// Already connected to wizard, just leave.
+//        }
 
         // Check if we have the bluetooth connect permission.
         if (ActivityCompat.checkSelfPermission(
@@ -193,7 +168,6 @@ class AndroidPlatform constructor(private val activity : MainActivity) : Platfor
         for (device in adapter.bondedDevices) {
             Log.i("Bonded BLE Device: ", device.name)
             if(isBLEDeviceAWizard(device)){
-//                lightwizard_gatt = device.connectGatt(activity.applicationContext,false, GATTCallbacks)
                 return device
             }
         }
@@ -216,6 +190,7 @@ class AndroidPlatform constructor(private val activity : MainActivity) : Platfor
         object Error : Result<Nothing>()
         data class Success<R>(val r: R) : Result<R>()
     }
+
     @Composable
     fun getWizardDevice() : State<Result<BluetoothDevice>> {
         return produceState<Result<BluetoothDevice>>(initialValue = Result.Loading ) {
@@ -236,79 +211,98 @@ class AndroidPlatform constructor(private val activity : MainActivity) : Platfor
         }
     }
 
-    @Composable fun getDeviceGatt(device : BluetoothDevice) : State<Nothing> {
-        callbackFlow {
-            val GATTCallbacks : BluetoothGattCallback = object : BluetoothGattCallback() {
-                override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
-                    if (newState == BluetoothProfile.STATE_CONNECTED) {
-                        // successfully connected to the GATT Server
-                        println("BLE connected to GATT")
-                        startServiceDiscovery(gatt)
-                    } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                        // disconnected from the GATT Server
-                        println("BLE disconnected from GATT")
-                    }
-                }
-
-                fun startServiceDiscovery(gatt: BluetoothGatt?) {
-                    if (ActivityCompat.checkSelfPermission(
-                            activity.applicationContext,
-                            Manifest.permission.BLUETOOTH_CONNECT
-                        ) != PackageManager.PERMISSION_GRANTED
-                    ) {
-                        Log.w("GATT", "Not enough perms for service discovery.")
-                        return // TODO: Return some sort of UI error saying "no perms"
-                    }
-
-                    if ( gatt?.discoverServices() == false ) {
-                        Log.w("GATT", "Failed to start service discovery.")
-                    }
-                }
-
-                override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
-                    if (status == BluetoothGatt.GATT_SUCCESS) {
-//                broadcastUpdate(ACTION_GATT_SERVICES_DISCOVERED)
-                        println("BLE found GATT Services : ${gatt?.services}")
-
-                        // Find the ble service for switching the light
-//                for ( service in gatt!!.services) {
-//                    if (service.uuid!!.toString() == wizard_service_id) {
-//                        wizard_service = service
+//    @Composable fun getDeviceGatt(device : BluetoothDevice) : State<Result<List<BluetoothGattService>>> {
+//        var lightwizard_gatt : BluetoothGatt? = null
+//        val flow = callbackFlow<List<BluetoothGattService>> {
+//            val GATTCallbacks : BluetoothGattCallback = object : BluetoothGattCallback() {
+//                override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
+//                    if (newState == BluetoothProfile.STATE_CONNECTED) {
+//                        // successfully connected to the GATT Server
+//                        println("BLE connected to GATT")
+//                        startServiceDiscovery(gatt)
+//                    } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+//                        // disconnected from the GATT Server
+//                        println("BLE disconnected from GATT")
+//                        cancel(CancellationException("BLE disconnected from GATT"))
 //                    }
 //                }
-//                if (wizard_service == null) {
-//                    Log.w("GATT", "No service in BLE device for switching lights.")
-//                    return
+//
+//                fun startServiceDiscovery(gatt: BluetoothGatt?) {
+//                    if (ActivityCompat.checkSelfPermission(
+//                            activity.applicationContext,
+//                            Manifest.permission.BLUETOOTH_CONNECT
+//                        ) != PackageManager.PERMISSION_GRANTED
+//                    ) {
+//                        Log.w("GATT", "Not enough perms for service discovery.")
+//                        cancel(CancellationException("Not enough perms for service discovery."))
+//                        return // TODO: Return some sort of UI error saying "no perms"
+//                    }
+//
+//                    if ( gatt?.discoverServices() == false ) {
+//                        Log.w("GATT", "Failed to start service discovery.")
+//                        cancel(CancellationException("Failed to start service discovery."))
+//                    }
 //                }
+//
+//                override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
+//                    if (status == BluetoothGatt.GATT_SUCCESS) {
+//                        println("BLE found GATT Services : ${gatt?.services}")
+//
+//                                // Find the ble service for switching the light
+//        //                for ( service in gatt!!.services) {
+//        //                    if (service.uuid!!.toString() == wizard_service_id) {
+//        //                        wizard_service = service
+//        //                    }
+//        //                }
+//                        trySendBlocking(gatt!!.services).onFailure { throwable ->
+//                            Log.e("GATT Callback", "Failed to send services to Compose : $throwable")
+//                        }
+//
+//                    } else {
+//                        Log.w("GATT", "onServicesDiscovered received: $status")
+//                        cancel(CancellationException("onServicesDiscovered received: $status")) // TODO: Why does it say 'exception is not thrown'?
+//                    }
+//                }
+//            }
+//            //not going to do anything with this gatt, just store it so it isn't garbage collect.
+//            lightwizard_gatt = device.connectGatt(activity.applicationContext,false, GATTCallbacks)
+//            awaitClose {}
+//        }
+//
+//        val state = produceState<Result<List<BluetoothGattService>>>(initialValue = Result.Loading) {
+//            flow.collect { new_services -> value = Result.Success(new_services) }
+//        }
+//
+//        return Pair(lightwizard_gatt!!, state)
+//    }
 
-                    } else {
-                        Log.w("GATT", "onServicesDiscovered received: $status")
-                    }
-                }
-            }
-        }
-    }
-
-    @Composable fun showDeviceGattServices(services: List<BluetoothGattService>) {
-        for(service in services) {
-            Text(service.toString())
-            for(char in service.characteristics) {
-                Text(char.toString()) // TODO: Add info to make more than one instance of 'Text'
-            }
-        }
-    }
 
 
     @Composable fun showDeviceGatt(device : BluetoothDevice) {
 
-        val gatt = getDeviceGatt(device)
-        if(isConnected) {
-            if (servicesDiscovered) {
-                val services = getDeviceGattServices()
-                showDeviceGattServices(services = services)
-
-            }
-        }
+//        val res_services = getDeviceGatt(device)
+//        when(res_services.value) {
+//            is Result.Loading -> {
+//                Text("Loading services...")
+//            }
+//
+//            Result.Error -> {
+//                Text("Failed to load services...")
+//            }
+//            is Result.Success -> {
+//                val (services) = res_services.value as Result.Success<List<BluetoothGattService>>
+//                for(service in services) {
+//                    Text(service.toString())
+//                    for(char in service.characteristics) {
+//                        Text(char.toString()) // TODO: Add info to make more than one instance of 'Text'
+//                    }
+//                }
+//
+//
+//            }
+//        }
+        val gatt = LightWizardGatt(device, activity)
+        Text("hi")
     }
 
     @Composable
@@ -338,11 +332,11 @@ class AndroidPlatform constructor(private val activity : MainActivity) : Platfor
 //                    val device_gatt = getDeviceGatt(device)
 //                    val char = BluetoothGattCharacteristic(UUID.fromString(wizard_char_switch_id), PERMISSION_WRITE, PROPERTY_WRITE)
 //                    device_gatt.writeCharacteristic(char, byteArrayOf(0,0), BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
+                    showDeviceGatt(device = device)
                 }
             }
 
         }
-//        showBLEDevice(wizard_device_state.value)
 
     }
 
