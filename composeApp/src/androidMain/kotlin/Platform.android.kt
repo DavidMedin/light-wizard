@@ -2,15 +2,12 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.os.Build
 import android.bluetooth.BluetoothDevice
-import android.bluetooth.BluetoothGatt
-import android.bluetooth.BluetoothGattCallback
-import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothManager
-import android.bluetooth.BluetoothProfile
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.content.pm.PackageManager
 import android.util.Log
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.RequiresApi
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat.getSystemService
@@ -26,13 +23,9 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import com.davidmedin.lightwizard.LightWizardGatt
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.channels.awaitClose
-import kotlinx.coroutines.channels.onFailure
-import kotlinx.coroutines.channels.trySendBlocking
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.callbackFlow
-import kotlin.coroutines.cancellation.CancellationException
 
 @RequiresApi(Build.VERSION_CODES.S)
 class AndroidPlatform constructor(private val activity : MainActivity) : Platform {
@@ -138,8 +131,6 @@ class AndroidPlatform constructor(private val activity : MainActivity) : Platfor
     }
 
 
-//    var wizard_service :  BluetoothGattService? = null // BLE service for switching lights
-
 
     override fun bluetoothEnabled(): Boolean {
         return adapter.isEnabled
@@ -211,103 +202,14 @@ class AndroidPlatform constructor(private val activity : MainActivity) : Platfor
         }
     }
 
-//    @Composable fun getDeviceGatt(device : BluetoothDevice) : State<Result<List<BluetoothGattService>>> {
-//        var lightwizard_gatt : BluetoothGatt? = null
-//        val flow = callbackFlow<List<BluetoothGattService>> {
-//            val GATTCallbacks : BluetoothGattCallback = object : BluetoothGattCallback() {
-//                override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
-//                    if (newState == BluetoothProfile.STATE_CONNECTED) {
-//                        // successfully connected to the GATT Server
-//                        println("BLE connected to GATT")
-//                        startServiceDiscovery(gatt)
-//                    } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-//                        // disconnected from the GATT Server
-//                        println("BLE disconnected from GATT")
-//                        cancel(CancellationException("BLE disconnected from GATT"))
-//                    }
-//                }
-//
-//                fun startServiceDiscovery(gatt: BluetoothGatt?) {
-//                    if (ActivityCompat.checkSelfPermission(
-//                            activity.applicationContext,
-//                            Manifest.permission.BLUETOOTH_CONNECT
-//                        ) != PackageManager.PERMISSION_GRANTED
-//                    ) {
-//                        Log.w("GATT", "Not enough perms for service discovery.")
-//                        cancel(CancellationException("Not enough perms for service discovery."))
-//                        return // TODO: Return some sort of UI error saying "no perms"
-//                    }
-//
-//                    if ( gatt?.discoverServices() == false ) {
-//                        Log.w("GATT", "Failed to start service discovery.")
-//                        cancel(CancellationException("Failed to start service discovery."))
-//                    }
-//                }
-//
-//                override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
-//                    if (status == BluetoothGatt.GATT_SUCCESS) {
-//                        println("BLE found GATT Services : ${gatt?.services}")
-//
-//                                // Find the ble service for switching the light
-//        //                for ( service in gatt!!.services) {
-//        //                    if (service.uuid!!.toString() == wizard_service_id) {
-//        //                        wizard_service = service
-//        //                    }
-//        //                }
-//                        trySendBlocking(gatt!!.services).onFailure { throwable ->
-//                            Log.e("GATT Callback", "Failed to send services to Compose : $throwable")
-//                        }
-//
-//                    } else {
-//                        Log.w("GATT", "onServicesDiscovered received: $status")
-//                        cancel(CancellationException("onServicesDiscovered received: $status")) // TODO: Why does it say 'exception is not thrown'?
-//                    }
-//                }
-//            }
-//            //not going to do anything with this gatt, just store it so it isn't garbage collect.
-//            lightwizard_gatt = device.connectGatt(activity.applicationContext,false, GATTCallbacks)
-//            awaitClose {}
-//        }
-//
-//        val state = produceState<Result<List<BluetoothGattService>>>(initialValue = Result.Loading) {
-//            flow.collect { new_services -> value = Result.Success(new_services) }
-//        }
-//
-//        return Pair(lightwizard_gatt!!, state)
-//    }
-
-
 
     @Composable fun showDeviceGatt(device : BluetoothDevice) {
-
-//        val res_services = getDeviceGatt(device)
-//        when(res_services.value) {
-//            is Result.Loading -> {
-//                Text("Loading services...")
-//            }
-//
-//            Result.Error -> {
-//                Text("Failed to load services...")
-//            }
-//            is Result.Success -> {
-//                val (services) = res_services.value as Result.Success<List<BluetoothGattService>>
-//                for(service in services) {
-//                    Text(service.toString())
-//                    for(char in service.characteristics) {
-//                        Text(char.toString()) // TODO: Add info to make more than one instance of 'Text'
-//                    }
-//                }
-//
-//
-//            }
-//        }
         val gatt = LightWizardGatt(device, activity)
         Text("hi")
     }
 
     @Composable
     override fun doBluetoothThings() {
-        // probably need to use produceState .
         println("Starting to do bluetooth things")
 
 
@@ -341,6 +243,52 @@ class AndroidPlatform constructor(private val activity : MainActivity) : Platfor
     }
 
     @Composable
+    override fun hasPermissions(): State<Boolean> {
+        return produceState<Boolean>(initialValue = false) {
+            val has_permissions = ActivityCompat.checkSelfPermission(
+                activity.applicationContext,
+                Manifest.permission.BLUETOOTH_CONNECT
+            ) == PackageManager.PERMISSION_GRANTED
+            &&
+            ActivityCompat.checkSelfPermission(
+                activity.applicationContext,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+
+            // If the app already has required permissions, don't wait for them to be accepted.
+            if(has_permissions){
+                value = true
+                return@produceState
+            }
+
+            // Wait for all Deferred values to complete (wait for permission to be accepted or denied).
+            val missing_perms_count = awaitAll(btConnectGranted, accessFineLocationGranted).filter{uhh : Boolean -> uhh == false}.size
+            value = missing_perms_count == 0
+
+        }
+
+    }
+
+    var btConnectGranted : CompletableDeferred<Boolean> = CompletableDeferred()
+    val ReqBluetoothConnectLauncher = activity.registerForActivityResult( ActivityResultContracts.RequestPermission() ) {
+        // This is some weird-ass syntax, but this is a callback argument for registerForActivityResult.
+        isGranted : Boolean -> run {
+            Log.i("Permission: ", "is $isGranted")
+            btConnectGranted.complete(isGranted)
+        }
+    }
+
+
+    var accessFineLocationGranted : CompletableDeferred<Boolean> = CompletableDeferred()
+    val ReqAccessFineLocationLauncher = activity.registerForActivityResult( ActivityResultContracts.RequestPermission() ) {
+        // This is some weird-ass syntax, but this is a callback argument for registerForActivityResult.
+        isGranted : Boolean -> run {
+            Log.i("Permission: ", "is $isGranted")
+            accessFineLocationGranted.complete(isGranted)
+        }
+    }
+
+    @Composable
     override fun requestPermissions() {
 
         Button(onClick = {
@@ -349,27 +297,12 @@ class AndroidPlatform constructor(private val activity : MainActivity) : Platfor
                     Manifest.permission.BLUETOOTH_CONNECT
                 ) != PackageManager.PERMISSION_GRANTED
             ) {
-                activity.requestPermissionLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT)
+                ReqBluetoothConnectLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT)
             }
 
         } ) {
-            Text("Request BLE Connect Permissions")
+            Text("Request Bluetooth Permissions")
         }
-
-
-        Button(onClick = {
-            if (ActivityCompat.checkSelfPermission(
-                    activity.applicationContext,
-                    Manifest.permission.BLUETOOTH_SCAN
-                ) != PackageManager.PERMISSION_GRANTED
-            ) {
-                activity.requestPermissionLauncher.launch(Manifest.permission.BLUETOOTH_SCAN)
-            }
-
-        } ) {
-            Text("Request BLE Scan Permissions")
-        }
-
 
         Button(onClick = {
             if (ActivityCompat.checkSelfPermission(
@@ -377,14 +310,13 @@ class AndroidPlatform constructor(private val activity : MainActivity) : Platfor
                     Manifest.permission.ACCESS_FINE_LOCATION
                 ) != PackageManager.PERMISSION_GRANTED
             ) {
-                activity.requestPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+                ReqAccessFineLocationLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
             }
 
         } ) {
-            Text("Request Fine Location Permissions")
+            Text("Request Location Permissions")
         }
 
     }
 }
 
-//actual fun getPlatform(): Platform = AndroidPlatform()

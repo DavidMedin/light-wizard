@@ -18,12 +18,7 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 
 class MainActivity : ComponentActivity() {
-    val requestPermissionLauncher = registerForActivityResult( ActivityResultContracts.RequestPermission() ) {
-        // This is some weird-ass syntax, but this is a callback argument for registerForActivityResult.
-            isGranted : Boolean -> run {
-            Log.i("Permission: ", "is $isGranted")
-        }
-    }
+
 
     // Setup Android Activity things.
     var platform : AndroidPlatform? = null

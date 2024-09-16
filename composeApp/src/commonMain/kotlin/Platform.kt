@@ -1,4 +1,5 @@
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 
 interface Platform {
     val name: String
@@ -9,6 +10,8 @@ interface Platform {
     @Composable
     fun doBluetoothThings()
 
+    @Composable
+    fun hasPermissions() : State<Boolean>
     @Composable
     fun requestPermissions()
 }
