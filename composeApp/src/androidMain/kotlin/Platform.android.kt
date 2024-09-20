@@ -216,7 +216,6 @@ class AndroidPlatform constructor(private val activity : MainActivity) : Platfor
 
     @Composable fun showDeviceGatt(device : BluetoothDevice) {
         val gatt = LightWizardGatt(device, activity)
-        Text("hi")
     }
 
     @Composable

@@ -55,7 +55,7 @@ class LightWizardGatt(bluetooth_device : BluetoothDevice, activity : MainActivit
                             light_switch_service = service
                             val switch_char = getLightSwitchChar(service)
                             if(switch_char != null) {
-                                gatt.writeCharacteristic(switch_char, byteArrayOf(0), BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
+                                gatt.writeCharacteristic(switch_char, byteArrayOf(0), BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
                                 println("toggled the characteristic.")
                             }else {
                                 Log.w("Char", "Failed to find characteristic.")
