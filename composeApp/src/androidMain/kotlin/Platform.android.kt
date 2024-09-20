@@ -53,16 +53,21 @@ class AndroidPlatform constructor(private val activity : MainActivity) : Platfor
 
     // Used by toggleScanForWizard.
 
+    open class MissingPermissionsException(s: String) : RuntimeException("Missing Android Permission : $s")
+    class MissingBTScanPermissionException : MissingPermissionsException("Bluetooth Scan")
+    class MissingBTConnectPermissionException : MissingPermissionsException("Bluetooth Connect")
+    class MissingAccessFineLocationException : MissingPermissionsException("Access Fine Location")
 
     // Toggle the BLE device scan for the Light Wizard.
     suspend fun scanForWizard() : BluetoothDevice? {
+        println("Running scanForWizard...")
         val found_devices : MutableList<BluetoothDevice> = mutableListOf()
         val scanCallback : ScanCallback = object : ScanCallback() {
 
             @SuppressLint("MissingPermission") // Should only be called by toggleScanForWizard, which checks.
             override fun onScanResult(callbackType: Int, result: ScanResult) {
                 super.onScanResult(callbackType, result)
-
+//                println("Found device : ${result.device.name}")
                 if(result.device.name != null) {
                     println("Found BLE device : ${result.device.name}")
                     found_devices.add(result.device)
@@ -77,30 +82,30 @@ class AndroidPlatform constructor(private val activity : MainActivity) : Platfor
                     Manifest.permission.BLUETOOTH_SCAN
                 ) != PackageManager.PERMISSION_GRANTED
             ) {
-                state = "no perms"
-                return null // TODO: Return some sort of UI error saying "no perms"
+                println("Failed to scan, no perms.")
+                throw MissingBTScanPermissionException()
             }
             if (ActivityCompat.checkSelfPermission(
                     activity.applicationContext,
                     Manifest.permission.ACCESS_FINE_LOCATION
                 ) != PackageManager.PERMISSION_GRANTED
             ) {
-                state = "no perms"
-                return null // TODO: Return some sort of UI error saying "no perms"
+                println("Failed to scan, no perms.")
+                throw MissingAccessFineLocationException()
             }
             if (ActivityCompat.checkSelfPermission(
                     activity.applicationContext,
                     Manifest.permission.BLUETOOTH_CONNECT
                 ) != PackageManager.PERMISSION_GRANTED
             ) {
-                state = "no perms"
-                return null // TODO: Return some sort of UI error saying "no perms"
+                println("Failed to scan, no perms.")
+                throw MissingBTConnectPermissionException()
             }
 
             // Start scan.
             // Aiden says that bluetooth scanning is weird and you need to do this sometimes.
-            wizardScanner.startScan(scanCallback)
-            wizardScanner.stopScan(scanCallback)
+//            wizardScanner.startScan(scanCallback)
+//            wizardScanner.stopScan(scanCallback)
 
             scanning = true
             wizardScanner.startScan(scanCallback)
@@ -178,7 +183,7 @@ class AndroidPlatform constructor(private val activity : MainActivity) : Platfor
     // I Don't know how this works TODO: figure it out
     sealed class Result<out T> {
         object Loading : Result<Nothing>()
-        object Error : Result<Nothing>()
+        data class Error<out E:Exception>(val exception: E?) : Result<Nothing>()
         data class Success<R>(val r: R) : Result<R>()
     }
 
@@ -189,13 +194,19 @@ class AndroidPlatform constructor(private val activity : MainActivity) : Platfor
             if ( wizard_device == null ) {
                 // There is no wizard that is bonded, time to find it.
                 println("No wizard is bonded, scanning...")
-                wizard_device = scanForWizard() // May yield the coroutine
 
-                if (wizard_device == null) {
-                    value = Result.Error
-                }else {
-                    value = Result.Success(wizard_device)
+                // Return the result as Success with the device or Error with an exception or null.
+                try {
+                    wizard_device = scanForWizard()
+                    if(wizard_device != null ){
+                        value = Result.Success(wizard_device)
+                    }else {
+                        value = Result.Error(null)
+                    }
+                } catch(e : Exception) {
+                    value = Result.Error(e)
                 }
+
             }else {
                 value = Result.Success(wizard_device)
             }
@@ -225,8 +236,9 @@ class AndroidPlatform constructor(private val activity : MainActivity) : Platfor
                 is Result.Loading -> {
                     Text("Scanning...")
                 }
-                Result.Error -> {
-                    Text("Failed!")
+                is Result.Error<*> -> {
+                    val (exception: Exception?) = wizard_device.value as Result.Error<Exception>
+                    Text("Failed to Scan : ${exception?.message}")
                 }
                 is Result.Success -> {
                     val (device) = wizard_device.value as Result.Success<BluetoothDevice>
@@ -242,40 +254,66 @@ class AndroidPlatform constructor(private val activity : MainActivity) : Platfor
 
     }
 
+    fun HasAllPermissions() : Boolean {
+        return ActivityCompat.checkSelfPermission(
+            activity.applicationContext,
+            Manifest.permission.BLUETOOTH_CONNECT
+        ) == PackageManager.PERMISSION_GRANTED
+                &&
+                ActivityCompat.checkSelfPermission(
+                    activity.applicationContext,
+                    Manifest.permission.ACCESS_FINE_LOCATION
+                ) == PackageManager.PERMISSION_GRANTED
+                &&
+                ActivityCompat.checkSelfPermission(
+                    activity.applicationContext,
+                    Manifest.permission.BLUETOOTH_SCAN
+                ) == PackageManager.PERMISSION_GRANTED
+    }
+
     @Composable
     override fun hasPermissions(): State<Boolean> {
         return produceState<Boolean>(initialValue = false) {
-            val has_permissions = ActivityCompat.checkSelfPermission(
-                activity.applicationContext,
-                Manifest.permission.BLUETOOTH_CONNECT
-            ) == PackageManager.PERMISSION_GRANTED
-            &&
-            ActivityCompat.checkSelfPermission(
-                activity.applicationContext,
-                Manifest.permission.ACCESS_FINE_LOCATION
-            ) == PackageManager.PERMISSION_GRANTED
 
             // If the app already has required permissions, don't wait for them to be accepted.
-            if(has_permissions){
+            if(HasAllPermissions()){
                 value = true
                 return@produceState
             }
 
             // Wait for all Deferred values to complete (wait for permission to be accepted or denied).
-            val missing_perms_count = awaitAll(btConnectGranted, accessFineLocationGranted).filter{uhh : Boolean -> uhh == false}.size
-            value = missing_perms_count == 0
+            awaitAll(btConnectGranted, accessFineLocationGranted)
+            if(HasAllPermissions()){
+                value = true
+                return@produceState
+            }
+
 
         }
 
     }
 
+    // Completes when either both BT Connect and BT Scan succeed or one fails.
     var btConnectGranted : CompletableDeferred<Boolean> = CompletableDeferred()
     val ReqBluetoothConnectLauncher = activity.registerForActivityResult( ActivityResultContracts.RequestPermission() ) {
         // This is some weird-ass syntax, but this is a callback argument for registerForActivityResult.
         isGranted : Boolean -> run {
             Log.i("Permission: ", "is $isGranted")
-            btConnectGranted.complete(isGranted)
+            // If is granted, go to next permission stage, otherwise, fail.
+            if( isGranted ){
+                ReqBluetoothScanLauncher.launch(android.Manifest.permission.BLUETOOTH_SCAN)
+            } else {
+                btConnectGranted.complete(false)
+            }
         }
+    }
+
+    val ReqBluetoothScanLauncher = activity.registerForActivityResult( ActivityResultContracts.RequestPermission() ) {
+        // This is some weird-ass syntax, but this is a callback argument for registerForActivityResult.
+            isGranted : Boolean -> run {
+        Log.i("Permission: ", "is $isGranted")
+        btConnectGranted.complete(isGranted)
+    }
     }
 
 
