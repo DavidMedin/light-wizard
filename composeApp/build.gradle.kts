@@ -36,7 +36,8 @@ kotlin {
             implementation(compose.components.uiToolingPreview)
             implementation("dev.kdrag0n:colorkt:1.0.5")
 
-
+//            api("org.jetbrains.kotlinx:kotlinx-coroutines-core:${coroutinesVersion}")
+            implementation("com.juul.kable:kable-core:0.34.0")
 
         }
         desktopMain.dependencies {
@@ -79,6 +80,7 @@ android {
     }
     dependencies {
         debugImplementation(compose.uiTooling)
+        implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:0.34.0")
     }
 }
 dependencies {

@@ -18,6 +18,7 @@ import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 import org.jetbrains.compose.resources.painterResource
 import org.jetbrains.compose.ui.tooling.preview.Preview
 //import dev.kdrag0n.colorkt.conversion.
@@ -87,7 +88,12 @@ fun App(platform : Platform) {
             }
 
             when(screen) {
-                Screens.PERMISSIONS -> platform.requestPermissions()
+                Screens.PERMISSIONS -> {
+                    val composableScope = rememberCoroutineScope()
+                    composableScope.launch {
+                        platform.requestPermissions()
+                    }
+                }
                 Screens.SEARCH -> platform.doBluetoothThings()
                 Screens.OPERATE -> TODO()
             }

@@ -3,10 +3,9 @@ import android.annotation.SuppressLint
 import android.os.Build
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
-import android.bluetooth.le.ScanCallback
-import android.bluetooth.le.ScanResult
 import android.content.pm.PackageManager
 import android.util.Log
+import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.RequiresApi
 import androidx.core.app.ActivityCompat
@@ -22,10 +21,20 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import com.davidmedin.lightwizard.LightWizardGatt
+import com.juul.kable.Characteristic
+import com.juul.kable.Filter
+import com.juul.kable.Peripheral
+import com.juul.kable.Scanner
+import com.juul.kable.Transport
+import com.juul.kable.characteristicOf
+import com.juul.kable.logs.Hex
+import com.juul.kable.logs.Logging
+import com.juul.kable.logs.SystemLogEngine
+import com.juul.kable.peripheral
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 
 @RequiresApi(Build.VERSION_CODES.S)
 class AndroidPlatform constructor(private val activity : MainActivity) : Platform {
@@ -44,7 +53,9 @@ class AndroidPlatform constructor(private val activity : MainActivity) : Platfor
     val adapter = bluetoothManager.adapter!!
 
 
-
+    // A coroutine scope that will have a bluetooth device bound to it.
+    // If we need multiple bluetooth devices connected, we'll need multiple coroutine scopes.
+    val big_coroutine_scope = CoroutineScope(Dispatchers.Default)
     val wizardScanner = adapter.bluetoothLeScanner
     var scanning = false
 
@@ -59,82 +70,82 @@ class AndroidPlatform constructor(private val activity : MainActivity) : Platfor
     class MissingAccessFineLocationException : MissingPermissionsException("Access Fine Location")
 
     // Toggle the BLE device scan for the Light Wizard.
-    suspend fun scanForWizard() : BluetoothDevice? {
-        println("Running scanForWizard...")
-        val found_devices : MutableList<BluetoothDevice> = mutableListOf()
-        val scanCallback : ScanCallback = object : ScanCallback() {
-
-            @SuppressLint("MissingPermission") // Should only be called by toggleScanForWizard, which checks.
-            override fun onScanResult(callbackType: Int, result: ScanResult) {
-                super.onScanResult(callbackType, result)
-//                println("Found device : ${result.device.name}")
-                if(result.device.name != null) {
-                    println("Found BLE device : ${result.device.name}")
-                    found_devices.add(result.device)
-                }
-            }
-
-        }
-
-        if(!scanning) {
-            if (ActivityCompat.checkSelfPermission(
-                    activity.applicationContext,
-                    Manifest.permission.BLUETOOTH_SCAN
-                ) != PackageManager.PERMISSION_GRANTED
-            ) {
-                println("Failed to scan, no perms.")
-                throw MissingBTScanPermissionException()
-            }
-            if (ActivityCompat.checkSelfPermission(
-                    activity.applicationContext,
-                    Manifest.permission.ACCESS_FINE_LOCATION
-                ) != PackageManager.PERMISSION_GRANTED
-            ) {
-                println("Failed to scan, no perms.")
-                throw MissingAccessFineLocationException()
-            }
-            if (ActivityCompat.checkSelfPermission(
-                    activity.applicationContext,
-                    Manifest.permission.BLUETOOTH_CONNECT
-                ) != PackageManager.PERMISSION_GRANTED
-            ) {
-                println("Failed to scan, no perms.")
-                throw MissingBTConnectPermissionException()
-            }
-
-            // Start scan.
-            // Aiden says that bluetooth scanning is weird and you need to do this sometimes.
+//    suspend fun scanForWizard() : BluetoothDevice? {
+//        println("Running scanForWizard...")
+//        val found_devices : MutableList<BluetoothDevice> = mutableListOf()
+//        val scanCallback : ScanCallback = object : ScanCallback() {
+//
+//            @SuppressLint("MissingPermission") // Should only be called by toggleScanForWizard, which checks.
+//            override fun onScanResult(callbackType: Int, result: ScanResult) {
+//                super.onScanResult(callbackType, result)
+////                println("Found device : ${result.device.name}")
+//                if(result.device.name != null) {
+//                    println("Found BLE device : ${result.device.name}")
+//                    found_devices.add(result.device)
+//                }
+//            }
+//
+//        }
+//
+//        if(!scanning) {
+//            if (ActivityCompat.checkSelfPermission(
+//                    activity.applicationContext,
+//                    Manifest.permission.BLUETOOTH_SCAN
+//                ) != PackageManager.PERMISSION_GRANTED
+//            ) {
+//                println("Failed to scan, no perms.")
+//                throw MissingBTScanPermissionException()
+//            }
+//            if (ActivityCompat.checkSelfPermission(
+//                    activity.applicationContext,
+//                    Manifest.permission.ACCESS_FINE_LOCATION
+//                ) != PackageManager.PERMISSION_GRANTED
+//            ) {
+//                println("Failed to scan, no perms.")
+//                throw MissingAccessFineLocationException()
+//            }
+//            if (ActivityCompat.checkSelfPermission(
+//                    activity.applicationContext,
+//                    Manifest.permission.BLUETOOTH_CONNECT
+//                ) != PackageManager.PERMISSION_GRANTED
+//            ) {
+//                println("Failed to scan, no perms.")
+//                throw MissingBTConnectPermissionException()
+//            }
+//
+//            // Start scan.
+//            // Aiden says that bluetooth scanning is weird and you need to do this sometimes.
+////            wizardScanner.startScan(scanCallback)
+////            wizardScanner.stopScan(scanCallback)
+//
+//            scanning = true
 //            wizardScanner.startScan(scanCallback)
+//
+//            // wait
+//            delay(SCAN_PERIOD)
+//
+//            // stop scan
+//            scanning = false
 //            wizardScanner.stopScan(scanCallback)
-
-            scanning = true
-            wizardScanner.startScan(scanCallback)
-
-            // wait
-            delay(SCAN_PERIOD)
-
-            // stop scan
-            scanning = false
-            wizardScanner.stopScan(scanCallback)
-            println("Done scanning BLE.")
-            println("Extracting found devices...")
-            var wizard : BluetoothDevice? = null
-            found_devices.forEach {
-                println(it)
-                if( isBLEDeviceAWizard(it) ) {
-                    println("Found wizard")
-                    wizard = it
-                }
-            }
-            return wizard
-        }else {
-            // Currently scanning, stop the scan.
-            scanning = false
-            wizardScanner.stopScan(scanCallback)
-        }
-        return null
-    }
-
+//            println("Done scanning BLE.")
+//            println("Extracting found devices...")
+//            var wizard : BluetoothDevice? = null
+//            found_devices.forEach {
+//                println(it)
+//                if( isBLEDeviceAWizard(it) ) {
+//                    println("Found wizard")
+//                    wizard = it
+//                }
+//            }
+//            return wizard
+//        }else {
+//            // Currently scanning, stop the scan.
+//            scanning = false
+//            wizardScanner.stopScan(scanCallback)
+//        }
+//        return null
+//    }
+//
 
 
     override fun bluetoothEnabled(): Boolean {
@@ -188,35 +199,58 @@ class AndroidPlatform constructor(private val activity : MainActivity) : Platfor
     }
 
     @Composable
-    fun getWizardDevice() : State<Result<BluetoothDevice>> {
-        return produceState<Result<BluetoothDevice>>(initialValue = Result.Loading ) {
-            var wizard_device : BluetoothDevice? = getWizardFromBondedBLEDevices()
-            if ( wizard_device == null ) {
-                // There is no wizard that is bonded, time to find it.
-                println("No wizard is bonded, scanning...")
+    fun getWizardPeripheral() : State<Result<Peripheral>> {
+        return produceState<Result<Peripheral>>(initialValue = Result.Loading ) {
+//            var wizard_device : BluetoothDevice? = getWizardFrom
 
-                // Return the result as Success with the device or Error with an exception or null.
-                try {
-                    wizard_device = scanForWizard()
-                    if(wizard_device != null ){
-                        value = Result.Success(wizard_device)
-                    }else {
-                        value = Result.Error(null)
+            val scanner = Scanner {
+                filters {
+                    match {
+                        name = Filter.Name.Exact("Light Wizard")
                     }
-                } catch(e : Exception) {
-                    value = Result.Error(e)
                 }
-
-            }else {
-                value = Result.Success(wizard_device)
+                logging {
+                    engine = SystemLogEngine
+                    level = Logging.Level.Warnings
+                    format = Logging.Format.Multiline
+                }
             }
+            val light_wiz_ad = scanner.advertisements.first() // <- suspends
+            val light_wiz_peri = big_coroutine_scope.peripheral(light_wiz_ad) { // <- suspending
+                // Peripheral config
+                transport = Transport.Le
+                logging {
+                    engine = SystemLogEngine
+                    level = Logging.Level.Warnings
+                    format = Logging.Format.Multiline
+                    data = Hex
+                }
+            }
+
+
+            light_wiz_peri.connect() // <- suspending
+
+            value = Result.Success(light_wiz_peri)
+
+
+            light_wiz_peri.state.collect { state ->
+                // Display and/or process the connection state.
+                Log.w("Light wizard BLE state", "Changed connectivity state to $state")
+            } // <- suspends indefinitely
         }
     }
 
-
-    @Composable fun showDeviceGatt(device : BluetoothDevice) {
-        val gatt = LightWizardGatt(device, activity)
+    @Composable
+    fun readPeripheralCharacteristic(peripheral : Peripheral, characteristic : Characteristic) : State<Result<ByteArray>> {
+        return produceState<Result<ByteArray>>(initialValue = Result.Loading) {
+            value = Result.Success(peripheral.read(characteristic))
+        }
     }
+//
+//
+//    @Composable fun showDeviceGatt(device : BluetoothDevice) {
+//        val gatt = LightWizardGatt(device, activity)
+//    }
 
     @Composable
     override fun doBluetoothThings() {
@@ -230,22 +264,39 @@ class AndroidPlatform constructor(private val activity : MainActivity) : Platfor
             Text("Toggle Scan")
         }
         if(show_content) {
-            val wizard_device = getWizardDevice()
-            when(wizard_device.value){
+            val wizard_peripheral = getWizardPeripheral()
+            when(wizard_peripheral.value){
                 is Result.Loading -> {
                     Text("Scanning...")
                 }
                 is Result.Error<*> -> {
-                    val (exception: Exception?) = wizard_device.value as Result.Error<Exception>
+                    val (exception: Exception?) = wizard_peripheral.value as Result.Error<Exception>
                     Text("Failed to Scan : ${exception?.message}")
                 }
                 is Result.Success -> {
-                    val (device) = wizard_device.value as Result.Success<BluetoothDevice>
-                    showBLEDevice(device = device)
-//                    val device_gatt = getDeviceGatt(device)
-//                    val char = BluetoothGattCharacteristic(UUID.fromString(wizard_char_switch_id), PERMISSION_WRITE, PROPERTY_WRITE)
-//                    device_gatt.writeCharacteristic(char, byteArrayOf(0,0), BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
-                    showDeviceGatt(device = device)
+                    val (periph) = wizard_peripheral.value as Result.Success<Peripheral>
+//                    showBLEDevice(device = device)
+////                    val device_gatt = getDeviceGatt(device)
+////                    val char = BluetoothGattCharacteristic(UUID.fromString(wizard_char_switch_id), PERMISSION_WRITE, PROPERTY_WRITE)
+////                    device_gatt.writeCharacteristic(char, byteArrayOf(0,0), BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE)
+//                    showDeviceGatt(device = device)
+
+                    val switch_char = characteristicOf("0ca2d9fa-785e-4811-a8c2-d4233409d79f", "e11d545a-908c-4e0d-b765-97d13c33aa50")
+                    val switch_state = readPeripheralCharacteristic(periph, switch_char)
+                    when(switch_state.value) {
+                        is Result.Error<*> -> {
+                            val (exception: Exception?) = wizard_peripheral.value as Result.Error<Exception>
+                            Text("Failed to read characteristic : ${exception?.message}")
+                        }
+                        Result.Loading -> {
+                            Text("Loading...")
+                        }
+                        is Result.Success -> {
+                            val (value) = switch_state.value as Result.Success<ByteArray>
+                            Text("Switch state : $value")
+
+                        }
+                    }
                 }
             }
 
@@ -258,6 +309,11 @@ class AndroidPlatform constructor(private val activity : MainActivity) : Platfor
             activity.applicationContext,
             Manifest.permission.BLUETOOTH_CONNECT
         ) == PackageManager.PERMISSION_GRANTED
+                &&
+                ActivityCompat.checkSelfPermission(
+                    activity.applicationContext,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                ) == PackageManager.PERMISSION_GRANTED
                 &&
                 ActivityCompat.checkSelfPermission(
                     activity.applicationContext,
@@ -281,7 +337,7 @@ class AndroidPlatform constructor(private val activity : MainActivity) : Platfor
             }
 
             // Wait for all Deferred values to complete (wait for permission to be accepted or denied).
-            awaitAll(btConnectGranted, accessFineLocationGranted)
+            accessGranted.await()
             if(HasAllPermissions()){
                 value = true
                 return@produceState
@@ -292,68 +348,107 @@ class AndroidPlatform constructor(private val activity : MainActivity) : Platfor
 
     }
 
-    // Completes when either both BT Connect and BT Scan succeed or one fails.
-    var btConnectGranted : CompletableDeferred<Boolean> = CompletableDeferred()
-    val ReqBluetoothConnectLauncher = activity.registerForActivityResult( ActivityResultContracts.RequestPermission() ) {
-        // This is some weird-ass syntax, but this is a callback argument for registerForActivityResult.
-        isGranted : Boolean -> run {
-            Log.i("Permission: ", "is $isGranted")
-            // If is granted, go to next permission stage, otherwise, fail.
-            if( isGranted ){
-                ReqBluetoothScanLauncher.launch(android.Manifest.permission.BLUETOOTH_SCAN)
-            } else {
-                btConnectGranted.complete(false)
+
+    // has all access been granted.
+    var accessGranted : CompletableDeferred<Boolean> = CompletableDeferred()
+
+    data class Perm<T>(
+        val permission: T,
+        val sync: CompletableDeferred<Boolean>,
+        val launcher: ActivityResultLauncher<T>
+    )
+    val perms = arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
+    val launchers : MutableList<Perm<String>> = mutableListOf()
+    init { // fill launchers with a triple of the permission, a sync object, and a launcher.
+        perms.forEach() { perm ->
+            var accessGranted : CompletableDeferred<Boolean> = CompletableDeferred()
+            val requestLauncher = activity.registerForActivityResult( ActivityResultContracts.RequestPermission() ) { isGranted: Boolean ->
+                run {
+                    Log.i("$perm Permission: ", "is $isGranted")
+                    accessGranted.complete(isGranted)
+                }
+            }
+            launchers.add( Perm(perm,accessGranted, requestLauncher) )
+        }
+    }
+
+    val locationPerms = arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION)
+    val locationPerm : Perm<Array<String>> =
+        run {
+            var accessGranted: CompletableDeferred<Boolean> = CompletableDeferred()
+            val requestLauncher =
+                activity.registerForActivityResult(
+                    ActivityResultContracts.RequestMultiplePermissions()
+                ) { permissions ->
+                    when {
+                        permissions.getOrDefault(
+                            Manifest.permission.ACCESS_FINE_LOCATION,
+                            false
+                        ) -> {
+                            // Precise location access granted.
+                            println("Location access granted")
+                            accessGranted.complete(true)
+                        }
+
+                        permissions.getOrDefault(
+                            Manifest.permission.ACCESS_COARSE_LOCATION,
+                            false
+                        ) -> {
+                            // Only approximate location access granted.
+                            println("Only got coarse location access granted")
+                            accessGranted.complete(false)
+                        }
+
+                        else -> {
+                            // No location access granted.
+                            println("Got no location access granted :(")
+                            accessGranted.complete(false)
+                        }
+                    }
+                }
+            Perm(locationPerms, accessGranted, requestLauncher)
+        }
+
+
+    suspend fun requestPermission(perm : Perm<String>) : Boolean {
+        if (ActivityCompat.checkSelfPermission(
+                activity.applicationContext,
+                perm.permission
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+            Log.i("${perm.permission} permission", "Already granted, not requesting.")
+            return true
+        }
+
+
+        // The Android Activity can not quite be ready (still in onCreate) when this code runs.
+        // Wait for the state to be STARTED before launching permissions. otherwise it explodes :)
+
+        perm.launcher.launch(perm.permission)
+
+        val isGranted = perm.sync.await() // <- Suspends
+        return isGranted
+    }
+
+    override suspend fun requestPermissions() {
+
+        var has_access = true
+        for(perm in launchers) {
+            val granted = requestPermission(perm)
+            if(granted == false ){
+                has_access = false
             }
         }
-    }
-
-    val ReqBluetoothScanLauncher = activity.registerForActivityResult( ActivityResultContracts.RequestPermission() ) {
-        // This is some weird-ass syntax, but this is a callback argument for registerForActivityResult.
-            isGranted : Boolean -> run {
-        Log.i("Permission: ", "is $isGranted")
-        btConnectGranted.complete(isGranted)
-    }
-    }
-
-
-    var accessFineLocationGranted : CompletableDeferred<Boolean> = CompletableDeferred()
-    val ReqAccessFineLocationLauncher = activity.registerForActivityResult( ActivityResultContracts.RequestPermission() ) {
-        // This is some weird-ass syntax, but this is a callback argument for registerForActivityResult.
-        isGranted : Boolean -> run {
-            Log.i("Permission: ", "is $isGranted")
-            accessFineLocationGranted.complete(isGranted)
-        }
-    }
-
-    @Composable
-    override fun requestPermissions() {
-
-        Button(onClick = {
-            if (ActivityCompat.checkSelfPermission(
-                    activity.applicationContext,
-                    Manifest.permission.BLUETOOTH_CONNECT
-                ) != PackageManager.PERMISSION_GRANTED
-            ) {
-                ReqBluetoothConnectLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT)
+        if( locationPerms.filter { perm ->
+            (ActivityCompat.checkSelfPermission(activity.applicationContext,perm) != PackageManager.PERMISSION_GRANTED)
+        }.size != 0 ) {
+            locationPerm.launcher.launch(locationPerms)
+            if( locationPerm.sync.await() == false ) { // <- suspends
+                has_access = false
             }
-
-        } ) {
-            Text("Request Bluetooth Permissions")
         }
 
-        Button(onClick = {
-            if (ActivityCompat.checkSelfPermission(
-                    activity.applicationContext,
-                    Manifest.permission.ACCESS_FINE_LOCATION
-                ) != PackageManager.PERMISSION_GRANTED
-            ) {
-                ReqAccessFineLocationLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
-            }
-
-        } ) {
-            Text("Request Location Permissions")
-        }
-
+        accessGranted.complete(has_access)
     }
 }
 

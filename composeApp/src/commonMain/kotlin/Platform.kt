@@ -12,8 +12,7 @@ interface Platform {
 
     @Composable
     fun hasPermissions() : State<Boolean>
-    @Composable
-    fun requestPermissions()
+    suspend fun requestPermissions()
 }
 
 //expect fun getPlatform(): Platform
