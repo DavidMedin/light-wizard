@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
     <!-- Request legacy Bluetooth permissions on older devices. -->
     <uses-permission android:name="android.permission.BLUETOOTH"
         android:maxSdkVersion="30" />
@@ -12,8 +12,8 @@
     <!-- Needed only if your app looks for Bluetooth devices.
     -->
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" tools:node="replace"/>
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" tools:node="replace"/>
 
     <!-- Needed only if your app communicates with already-paired Bluetooth
          devices. -->

@@ -10,12 +10,16 @@ androidx-core-ktx = "1.13.1"
 androidx-espresso-core = "3.6.0"
 androidx-material = "1.12.0"
 androidx-test-junit = "1.2.0"
+colorkt = "1.0.5"
 compose-plugin = "1.6.11"
 junit = "4.13.2"
+kableCore = "0.34.0"
 kotlin = "2.0.0"
 bluetooth = "1.0.0-alpha02"
 
 [libraries]
+colorkt = { module = "dev.kdrag0n:colorkt", version.ref = "colorkt" }
+kable-core = { module = "com.juul.kable:kable-core", version.ref = "kableCore" }
 kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
 kotlin-test-junit = { module = "org.jetbrains.kotlin:kotlin-test-junit", version.ref = "kotlin" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
